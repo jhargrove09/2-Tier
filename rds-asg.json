@@ -32,7 +32,7 @@
         "AutoScalingGroupName": "rdsproject-asg",
         "LaunchTemplate": {
           "LaunchTemplateId": { "Ref": "LaunchTemplateId" },
-          "Version": "$Latest"
+          "Version": "1"
         },
         "MinSize": "2",
         "MaxSize": "3",
