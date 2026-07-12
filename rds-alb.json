@@ -1,0 +1,133 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Flowku / rdsproject - Application Load Balancer for existing Joomla web servers",
+
+  "Parameters": {
+    "VpcId": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Default": "vpc-0e252808facebde87",
+      "Description": "Existing rdsproject VPC"
+    },
+    "PublicSubnet1": {
+      "Type": "AWS::EC2::Subnet::Id",
+      "Default": "subnet-0cdc2aeede763a43c",
+      "Description": "Existing public subnet 1"
+    },
+    "PublicSubnet2": {
+      "Type": "AWS::EC2::Subnet::Id",
+      "Default": "subnet-04edfb2b8b0e5b06c",
+      "Description": "Existing public subnet 2"
+    },
+    "WebServer1InstanceId": {
+      "Type": "AWS::EC2::Instance::Id",
+      "Default": "i-040b232157961f769",
+      "Description": "rdsproject-webserver-1"
+    },
+    "WebServer2InstanceId": {
+      "Type": "AWS::EC2::Instance::Id",
+      "Default": "i-02376114a4a231f31",
+      "Description": "rdsproject-webserver-2"
+    },
+    "WebServerSecurityGroupId": {
+      "Type": "AWS::EC2::SecurityGroup::Id",
+      "Default": "sg-007bffbfe36f08298",
+      "Description": "Existing rdsproject-webserver-sg, attached to both instances"
+    }
+  },
+
+  "Resources": {
+
+    "ALBSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Allows inbound HTTP from the internet to the ALB",
+        "VpcId": { "Ref": "VpcId" },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "Tags": [
+          { "Key": "Name", "Value": "rdsproject-alb-sg" }
+        ]
+      }
+    },
+
+    "WebServerSGIngressFromALB": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "GroupId": { "Ref": "WebServerSecurityGroupId" },
+        "IpProtocol": "tcp",
+        "FromPort": 80,
+        "ToPort": 80,
+        "SourceSecurityGroupId": { "Ref": "ALBSecurityGroup" },
+        "Description": "Allow HTTP only from the ALB"
+      }
+    },
+
+    "ALBTargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "Name": "rdsproject-tg",
+        "Port": 80,
+        "Protocol": "HTTP",
+        "VpcId": { "Ref": "VpcId" },
+        "TargetType": "instance",
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckPath": "/",
+        "HealthCheckIntervalSeconds": 30,
+        "HealthyThresholdCount": 2,
+        "UnhealthyThresholdCount": 3,
+        "Targets": [
+          { "Id": { "Ref": "WebServer1InstanceId" }, "Port": 80 },
+          { "Id": { "Ref": "WebServer2InstanceId" }, "Port": 80 }
+        ]
+      }
+    },
+
+    "ApplicationLoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties": {
+        "Name": "rdsproject-alb",
+        "Scheme": "internet-facing",
+        "Type": "application",
+        "Subnets": [
+          { "Ref": "PublicSubnet1" },
+          { "Ref": "PublicSubnet2" }
+        ],
+        "SecurityGroups": [
+          { "Ref": "ALBSecurityGroup" }
+        ]
+      }
+    },
+
+    "ALBListener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "LoadBalancerArn": { "Ref": "ApplicationLoadBalancer" },
+        "Port": 80,
+        "Protocol": "HTTP",
+        "DefaultActions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": { "Ref": "ALBTargetGroup" }
+          }
+        ]
+      }
+    }
+  },
+
+  "Outputs": {
+    "LoadBalancerDNS": {
+      "Description": "DNS name of the ALB - use this in your browser to reach the site",
+      "Value": { "Fn::GetAtt": ["ApplicationLoadBalancer", "DNSName"] }
+    },
+    "TargetGroupArn": {
+      "Description": "ARN of the target group registered with both web servers",
+      "Value": { "Ref": "ALBTargetGroup" }
+    }
+  }
+}
