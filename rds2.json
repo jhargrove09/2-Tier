@@ -1,0 +1,427 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "FlowKu - Full Two-Tier LAMP Stack with Joomla, RDS MySQL, ALB, and Auto Scaling Group",
+
+  "Parameters": {
+    "RDSMasterPassword": {
+      "Type": "String",
+      "NoEcho": true,
+      "MinLength": 8,
+      "Description": "Master password for the RDS MySQL instance (min 8 characters)"
+    },
+    "JoomlaDBPassword": {
+      "Type": "String",
+      "NoEcho": true,
+      "MinLength": 8,
+      "Description": "Password for the Joomla database user (min 8 characters)"
+    },
+    "JoomlaAdminPassword": {
+      "Type": "String",
+      "NoEcho": true,
+      "MinLength": 8,
+      "Description": "Password for the Joomla admin account (min 8 characters)"
+    }
+  },
+
+  "Resources": {
+
+    "FlowKuVPC": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.50.0.0/16",
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true,
+        "Tags": [{ "Key": "Name", "Value": "flowku-vpc" }]
+      }
+    },
+
+    "PublicSubnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "FlowKuVPC" },
+        "CidrBlock": "10.50.1.0/24",
+        "AvailabilityZone": { "Fn::Select": ["0", { "Fn::GetAZs": "" }] },
+        "MapPublicIpOnLaunch": true,
+        "Tags": [{ "Key": "Name", "Value": "flowku-public-1" }]
+      }
+    },
+
+    "PublicSubnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "FlowKuVPC" },
+        "CidrBlock": "10.50.2.0/24",
+        "AvailabilityZone": { "Fn::Select": ["1", { "Fn::GetAZs": "" }] },
+        "MapPublicIpOnLaunch": true,
+        "Tags": [{ "Key": "Name", "Value": "flowku-public-2" }]
+      }
+    },
+
+    "PrivateSubnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "FlowKuVPC" },
+        "CidrBlock": "10.50.3.0/24",
+        "AvailabilityZone": { "Fn::Select": ["0", { "Fn::GetAZs": "" }] },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [{ "Key": "Name", "Value": "flowku-private-1" }]
+      }
+    },
+
+    "PrivateSubnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "FlowKuVPC" },
+        "CidrBlock": "10.50.4.0/24",
+        "AvailabilityZone": { "Fn::Select": ["1", { "Fn::GetAZs": "" }] },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [{ "Key": "Name", "Value": "flowku-private-2" }]
+      }
+    },
+
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [{ "Key": "Name", "Value": "flowku-igw" }]
+      }
+    },
+
+    "IGWAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": { "Ref": "FlowKuVPC" },
+        "InternetGatewayId": { "Ref": "InternetGateway" }
+      }
+    },
+
+    "PublicRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": { "Ref": "FlowKuVPC" },
+        "Tags": [{ "Key": "Name", "Value": "flowku-rt-public" }]
+      }
+    },
+
+    "PublicRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "IGWAttachment",
+      "Properties": {
+        "RouteTableId": { "Ref": "PublicRouteTable" },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": { "Ref": "InternetGateway" }
+      }
+    },
+
+    "PublicSubnet1RouteAssoc": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": { "Ref": "PublicSubnet1" },
+        "RouteTableId": { "Ref": "PublicRouteTable" }
+      }
+    },
+
+    "PublicSubnet2RouteAssoc": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": { "Ref": "PublicSubnet2" },
+        "RouteTableId": { "Ref": "PublicRouteTable" }
+      }
+    },
+
+    "PrivateRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": { "Ref": "FlowKuVPC" },
+        "Tags": [{ "Key": "Name", "Value": "flowku-rt-private" }]
+      }
+    },
+
+    "PrivateSubnet1RouteAssoc": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": { "Ref": "PrivateSubnet1" },
+        "RouteTableId": { "Ref": "PrivateRouteTable" }
+      }
+    },
+
+    "PrivateSubnet2RouteAssoc": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": { "Ref": "PrivateSubnet2" },
+        "RouteTableId": { "Ref": "PrivateRouteTable" }
+      }
+    },
+
+    "ALBSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Allow HTTP traffic from the internet to the ALB",
+        "VpcId": { "Ref": "FlowKuVPC" },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "Tags": [{ "Key": "Name", "Value": "flowku-alb-sg" }]
+      }
+    },
+
+    "WebServerSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Allow HTTP from ALB only and SSH",
+        "VpcId": { "Ref": "FlowKuVPC" },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "SourceSecurityGroupId": { "Ref": "ALBSecurityGroup" }
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "Tags": [{ "Key": "Name", "Value": "flowku-webserver-sg" }]
+      }
+    },
+
+    "RDSSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Allow MySQL from web server only",
+        "VpcId": { "Ref": "FlowKuVPC" },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 3306,
+            "ToPort": 3306,
+            "SourceSecurityGroupId": { "Ref": "WebServerSecurityGroup" }
+          }
+        ],
+        "Tags": [{ "Key": "Name", "Value": "flowku-rds-sg" }]
+      }
+    },
+
+    "RDSSubnetGroup": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Properties": {
+        "DBSubnetGroupDescription": "Private subnets for FlowKu RDS",
+        "SubnetIds": [
+          { "Ref": "PrivateSubnet1" },
+          { "Ref": "PrivateSubnet2" }
+        ],
+        "Tags": [{ "Key": "Name", "Value": "flowku-rds-subnet-group" }]
+      }
+    },
+
+    "RDSInstance": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "DBInstanceIdentifier": "flowku-db",
+        "DBInstanceClass": "db.t3.micro",
+        "Engine": "MySQL",
+        "EngineVersion": "8.0",
+        "MasterUsername": "admin",
+        "MasterUserPassword": { "Ref": "RDSMasterPassword" },
+        "DBName": "joomladb",
+        "AllocatedStorage": "20",
+        "StorageType": "gp2",
+        "MultiAZ": false,
+        "PubliclyAccessible": false,
+        "DBSubnetGroupName": { "Ref": "RDSSubnetGroup" },
+        "VPCSecurityGroups": [{ "Ref": "RDSSecurityGroup" }],
+        "BackupRetentionPeriod": 7,
+        "DeletionProtection": false,
+        "Tags": [{ "Key": "Name", "Value": "flowku-db" }]
+      }
+    },
+
+    "ApplicationLoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties": {
+        "Name": "flowku-alb",
+        "Scheme": "internet-facing",
+        "Type": "application",
+        "SecurityGroups": [{ "Ref": "ALBSecurityGroup" }],
+        "Subnets": [
+          { "Ref": "PublicSubnet1" },
+          { "Ref": "PublicSubnet2" }
+        ],
+        "Tags": [{ "Key": "Name", "Value": "flowku-alb" }]
+      }
+    },
+
+    "ALBTargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "Name": "flowku-tg",
+        "Port": 80,
+        "Protocol": "HTTP",
+        "VpcId": { "Ref": "FlowKuVPC" },
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckPath": "/",
+        "HealthCheckIntervalSeconds": 30,
+        "HealthyThresholdCount": 2,
+        "UnhealthyThresholdCount": 5,
+        "TargetType": "instance",
+        "Tags": [{ "Key": "Name", "Value": "flowku-tg" }]
+      }
+    },
+
+    "ALBListener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "LoadBalancerArn": { "Ref": "ApplicationLoadBalancer" },
+        "Port": 80,
+        "Protocol": "HTTP",
+        "DefaultActions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": { "Ref": "ALBTargetGroup" }
+          }
+        ]
+      }
+    },
+
+    "LaunchTemplate": {
+      "Type": "AWS::EC2::LaunchTemplate",
+      "DependsOn": "RDSInstance",
+      "Properties": {
+        "LaunchTemplateName": "flowku-lt",
+        "LaunchTemplateData": {
+          "InstanceType": "t2.micro",
+          "ImageId": "ami-08e3f17ecdd66f6c8",
+          "SecurityGroupIds": [{ "Ref": "WebServerSecurityGroup" }],
+          "UserData": {
+            "Fn::Base64": {
+              "Fn::Join": [
+                "",
+                [
+                  "#!/bin/bash\n",
+                  "apt update -y\n",
+                  "apt upgrade -y\n",
+                  "apt install -y apache2 php libapache2-mod-php php-mysql php-xml php-mbstring php-zip php-curl php-gd php-intl php-bcmath mysql-client unzip wget\n",
+                  "systemctl start apache2\n",
+                  "systemctl enable apache2\n",
+                  "rm -f /var/www/html/index.html\n",
+
+                  "# Download and extract Joomla\n",
+                  "cd /var/www/html\n",
+                  "wget -q https://downloads.joomla.org/cms/joomla5/5-2-6/Joomla_5-2-6-Stable-Full_Package.zip -O joomla.zip\n",
+                  "unzip -q joomla.zip\n",
+                  "rm joomla.zip\n",
+                  "chown -R www-data:www-data /var/www/html/\n",
+                  "chmod -R 755 /var/www/html/\n",
+
+                  "# Wait for RDS to be available\n",
+                  "RDS_ENDPOINT='", { "Fn::GetAtt": ["RDSInstance", "Endpoint.Address"] }, "'\n",
+                  "echo 'Waiting for RDS...' \n",
+                  "until mysql -h $RDS_ENDPOINT -u admin -p'", { "Ref": "RDSMasterPassword" }, "' -e 'SELECT 1;' &>/dev/null; do sleep 10; done\n",
+
+                  "# Create Joomla DB user\n",
+                  "mysql -h $RDS_ENDPOINT -u admin -p'", { "Ref": "RDSMasterPassword" }, "' <<EOF\n",
+                  "CREATE USER IF NOT EXISTS 'joomlauser'@'%' IDENTIFIED BY '", { "Ref": "JoomlaDBPassword" }, "';\n",
+                  "GRANT ALL PRIVILEGES ON joomladb.* TO 'joomlauser'@'%';\n",
+                  "FLUSH PRIVILEGES;\n",
+                  "EOF\n",
+
+                  "# Install Joomla via CLI\n",
+                  "cd /var/www/html\n",
+                  "php installation/joomla.php install \\\n",
+                  "  --site-name='FlowKu' \\\n",
+                  "  --admin-user='admin' \\\n",
+                  "  --admin-username='admin' \\\n",
+                  "  --admin-password='", { "Ref": "JoomlaAdminPassword" }, "' \\\n",
+                  "  --admin-email='j.hargrove09@gmail.com' \\\n",
+                  "  --db-type='mysqli' \\\n",
+                  "  --db-host='", { "Fn::GetAtt": ["RDSInstance", "Endpoint.Address"] }, "' \\\n",
+                  "  --db-user='joomlauser' \\\n",
+                  "  --db-pass='", { "Ref": "JoomlaDBPassword" }, "' \\\n",
+                  "  --db-name='joomladb' \\\n",
+                  "  --db-prefix='jos_' \\\n",
+                  "  --db-encryption=0 \n",
+
+                  "# Remove installation directory\n",
+                  "rm -rf /var/www/html/installation/\n",
+
+                  "# Final permissions\n",
+                  "chown -R www-data:www-data /var/www/html/\n",
+                  "systemctl restart apache2\n",
+                  "echo 'FlowKu Joomla installation complete!' >> /var/log/flowku-install.log\n"
+                ]
+              ]
+            }
+          },
+          "TagSpecifications": [
+            {
+              "ResourceType": "instance",
+              "Tags": [{ "Key": "Name", "Value": "flowku-webserver" }]
+            }
+          ]
+        }
+      }
+    },
+
+    "AutoScalingGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "DependsOn": "ALBListener",
+      "Properties": {
+        "AutoScalingGroupName": "flowku-asg",
+        "LaunchTemplate": {
+          "LaunchTemplateId": { "Ref": "LaunchTemplate" },
+          "Version": { "Fn::GetAtt": ["LaunchTemplate", "LatestVersionNumber"] }
+        },
+        "MinSize": "2",
+        "MaxSize": "3",
+        "DesiredCapacity": "2",
+        "VPCZoneIdentifier": [
+          { "Ref": "PublicSubnet1" },
+          { "Ref": "PublicSubnet2" }
+        ],
+        "TargetGroupARNs": [{ "Ref": "ALBTargetGroup" }],
+        "HealthCheckType": "ELB",
+        "HealthCheckGracePeriod": 600,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "flowku-webserver",
+            "PropagateAtLaunch": true
+          }
+        ]
+      }
+    },
+
+    "CPUScalingPolicy": {
+      "Type": "AWS::AutoScaling::ScalingPolicy",
+      "Properties": {
+        "AutoScalingGroupName": { "Ref": "AutoScalingGroup" },
+        "PolicyType": "TargetTrackingScaling",
+        "TargetTrackingConfiguration": {
+          "PredefinedMetricSpecification": {
+            "PredefinedMetricType": "ASGAverageCPUUtilization"
+          },
+          "TargetValue": 50.0
+        }
+      }
+    }
+
+  },
+
+  "Outputs": {
+    "LoadBalancerDNS": {
+      "Description": "Use this URL to access your FlowKu Joomla site",
+      "Value": { "Fn::GetAtt": ["ApplicationLoadBalancer", "DNSName"] }
+    },
+    "RDSEndpoint": {
+      "Description": "RDS MySQL endpoint",
+      "Value": { "Fn::GetAtt": ["RDSInstance", "Endpoint.Address"] }
+    }
+  }
+}
