@@ -20,8 +20,15 @@
       "NoEcho": true,
       "MinLength": 8,
       "Description": "Password for the Joomla admin account (min 8 characters)"
+    },
+    "LatestUbuntuAMI": {
+      "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+      "Default": "/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id",
+      "Description": "Automatically resolves to the latest Ubuntu 22.04 LTS AMI in the current region"
     }
+
   },
+  
 
   "Resources": {
 
@@ -297,7 +304,7 @@
         "LaunchTemplateName": "flowku-lt",
         "LaunchTemplateData": {
           "InstanceType": "t2.micro",
-          "ImageId": "ami-08e3f17ecdd66f6c8",
+          "ImageId": { "Ref": "LatestUbuntuAMI" },
           "SecurityGroupIds": [{ "Ref": "WebServerSecurityGroup" }],
           "UserData": {
             "Fn::Base64": {
